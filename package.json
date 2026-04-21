@@ -1,0 +1,37 @@
+{
+  "name": "railway-port-tunnel",
+  "version": "0.1.0",
+  "description": "A small ngrok-style tunnel with a deployable relay server and local CLI.",
+  "main": "src/client.js",
+  "bin": {
+    "railway-tunnel": "./bin/railway-tunnel.js"
+  },
+  "files": [
+    "bin",
+    "src",
+    "server",
+    "README.md",
+    "Procfile"
+  ],
+  "scripts": {
+    "start": "node server/index.js",
+    "start:server": "node server/index.js",
+    "demo:page": "node examples/test-page.js",
+    "tunnel": "node ./bin/railway-tunnel.js",
+    "test:e2e": "node scripts/e2e-test.js"
+  },
+  "keywords": [
+    "tunnel",
+    "proxy",
+    "cli",
+    "railway",
+    "ngrok"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "^8.20.0"
+  }
+}
