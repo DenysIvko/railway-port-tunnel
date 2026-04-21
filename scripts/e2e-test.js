@@ -90,13 +90,13 @@ function findAvailablePort(preferredPort) {
       const fallbackServer = net.createServer();
       fallbackServer.unref();
       fallbackServer.on("error", reject);
-      fallbackServer.listen(0, "127.0.0.1", () => {
+      fallbackServer.listen(0, () => {
         const address = fallbackServer.address();
         fallbackServer.close(() => resolve(address.port));
       });
     });
 
-    server.listen(preferredPort, "127.0.0.1", () => {
+    server.listen(preferredPort, () => {
       const address = server.address();
       server.close(() => resolve(address.port));
     });

@@ -40,6 +40,20 @@ Install dependencies:
 npm install
 ```
 
+Expose a local port through the live Railway relay:
+
+```bash
+npx railway-port-tunnel --port 3500
+```
+
+The CLI now defaults to the deployed relay:
+
+```text
+https://relay-production-55c2.up.railway.app
+```
+
+Override it with `--server` or the `RAILWAY_TUNNEL_SERVER_URL` environment variable when needed.
+
 Start the relay server:
 
 ```bash

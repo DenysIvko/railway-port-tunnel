@@ -1,7 +1,16 @@
 {
   "name": "railway-port-tunnel",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "A small ngrok-style tunnel with a deployable relay server and local CLI.",
+  "author": "Denys Ivko",
+  "homepage": "https://github.com/DenysIvko/railway-port-tunnel#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DenysIvko/railway-port-tunnel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/DenysIvko/railway-port-tunnel/issues"
+  },
   "main": "src/client.js",
   "bin": {
     "railway-tunnel": "./bin/railway-tunnel.js"

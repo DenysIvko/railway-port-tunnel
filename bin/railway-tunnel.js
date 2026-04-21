@@ -3,12 +3,16 @@
 const { TunnelClient } = require("../src/client");
 const { createTunnelId } = require("../src/protocol");
 
+const defaultServerUrl =
+  process.env.RAILWAY_TUNNEL_SERVER_URL ||
+  "https://relay-production-55c2.up.railway.app";
+
 function printHelp() {
-  process.stdout.write(`Usage: railway-tunnel --server <url> --port <port> [options]
+  process.stdout.write(`Usage: railway-tunnel --port <port> [options]
 
 Options:
   -p, --port <port>     Local port to expose
-  -s, --server <url>    Relay base URL (default: http://127.0.0.1:8080)
+  -s, --server <url>    Relay base URL (default: ${defaultServerUrl})
   -i, --id <id>         Optional fixed tunnel ID
   -H, --host <host>     Local host to expose (default: 127.0.0.1)
   -h, --help            Show this help
@@ -18,7 +22,7 @@ Options:
 function parseArgs(argv) {
   const options = {
     host: "127.0.0.1",
-    server: "http://127.0.0.1:8080",
+    server: defaultServerUrl,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
