@@ -13,6 +13,7 @@ class TunnelClient {
     const {
       serverUrl,
       host = "127.0.0.1",
+      password,
       port,
       tunnelId,
       logger = console,
@@ -20,6 +21,7 @@ class TunnelClient {
 
     this.serverUrl = normalizeServerUrl(serverUrl);
     this.localBaseUrl = new URL(`http://${host}:${port}`);
+    this.password = password;
     this.tunnelId = tunnelId;
     this.logger = logger;
     this.ws = null;
@@ -66,6 +68,7 @@ class TunnelClient {
 
     ws.on("open", () => {
       this.send({
+        password: this.password,
         type: "register",
         tunnelId: this.tunnelId,
         target: this.localBaseUrl.toString(),

@@ -19,6 +19,7 @@ const publicBaseUrl =
 const wildcardBaseDomain = normalizeWildcardBaseDomain(
   process.env.PUBLIC_WILDCARD_DOMAIN,
 );
+const tunnelPassword = process.env.TUNNEL_PASSWORD || "";
 const maxBodySize = 10 * 1024 * 1024;
 const tunnelSockets = new Map();
 const pendingResponses = new Map();
@@ -157,6 +158,7 @@ const server = http.createServer(async (request, response) => {
       usage: wildcardBaseDomain
         ? `Connect the CLI, then open /t/<tunnel-id> or https://<tunnel-id>.${wildcardBaseDomain}`
         : "Connect the CLI, then open /t/<tunnel-id>.",
+      authRequired: Boolean(tunnelPassword),
       publicBaseUrl,
       wildcardBaseDomain,
       routingMode: wildcardBaseDomain ? "path+host" : "path",
@@ -195,6 +197,15 @@ wsServer.on("connection", (ws) => {
     }
 
     if (message.type === "register") {
+      if (tunnelPassword && message.password !== tunnelPassword) {
+        sendJson(ws, {
+          type: "error",
+          error: "Invalid tunnel password.",
+        });
+        ws.close();
+        return;
+      }
+
       const tunnelId = String(message.tunnelId || "").trim();
       if (!/^[a-zA-Z0-9_-]{4,64}$/.test(tunnelId)) {
         sendJson(ws, {

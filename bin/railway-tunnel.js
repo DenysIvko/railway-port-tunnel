@@ -6,6 +6,8 @@ const { createTunnelId } = require("../src/protocol");
 const defaultServerUrl =
   process.env.RAILWAY_TUNNEL_SERVER_URL ||
   "https://relay-production-55c2.up.railway.app";
+const defaultTunnelPassword =
+  process.env.RAILWAY_TUNNEL_PASSWORD || undefined;
 const tunnelIdPattern = /^[a-zA-Z0-9_-]{4,64}$/;
 
 function printHelp() {
@@ -17,6 +19,7 @@ Options:
                         Example: --port 3500:docs --port 3600:admin
   -s, --server <url>    Relay base URL (default: ${defaultServerUrl})
   -i, --id <id>         Optional fixed tunnel ID. Repeat to match multiple ports.
+  -P, --pass <secret>   Shared tunnel password
   -H, --host <host>     Local host to expose (default: 127.0.0.1)
   -h, --help            Show this help
 `);
@@ -59,6 +62,7 @@ function parseArgs(argv) {
   const options = {
     host: "127.0.0.1",
     ids: [],
+    password: defaultTunnelPassword,
     ports: [],
     server: defaultServerUrl,
   };
@@ -85,6 +89,12 @@ function parseArgs(argv) {
 
     if (argument === "--id" || argument === "-i") {
       options.ids.push(parseTunnelId(argv[index + 1]));
+      index += 1;
+      continue;
+    }
+
+    if (argument === "--pass" || argument === "-P") {
+      options.password = argv[index + 1];
       index += 1;
       continue;
     }
@@ -151,6 +161,7 @@ async function main() {
     return new TunnelClient({
       serverUrl: options.server,
       host: options.host,
+      password: options.password,
       port: tunnelConfig.port,
       tunnelId: tunnelConfig.tunnelId,
       logger: {

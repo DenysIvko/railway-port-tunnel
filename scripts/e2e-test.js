@@ -165,7 +165,29 @@ async function terminate(child) {
   });
 }
 
+async function waitForExit(child, timeoutMs = 10_000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for process exit."));
+    }, timeoutMs);
+
+    function cleanup() {
+      clearTimeout(timer);
+      child.off("exit", onExit);
+    }
+
+    function onExit(code, signal) {
+      cleanup();
+      resolve({ code, signal });
+    }
+
+    child.on("exit", onExit);
+  });
+}
+
 async function main() {
+  const sharedPassword = "31415";
   const firstPagePort = await findAvailablePort(3500);
   const firstPage = startProcess("page-a", ["examples/test-page.js"], {
     PAGE_NAME: "Alpha Demo",
@@ -192,6 +214,7 @@ async function main() {
     pathRelay = startProcess("relay-path", ["server/index.js"], {
       PORT: String(pathRelayPort),
       PUBLIC_BASE_URL: pathRelayBaseUrl,
+      TUNNEL_PASSWORD: sharedPassword,
     });
     await waitForHttp(`${pathRelayBaseUrl}/health`);
 
@@ -199,6 +222,8 @@ async function main() {
       "bin/railway-tunnel.js",
       "--server",
       pathRelayBaseUrl,
+      "--pass",
+      sharedPassword,
       "--port",
       `${firstPagePort}:alpha`,
       "--port",
@@ -222,9 +247,20 @@ async function main() {
     assert.match(alphaPathHtml, /Alpha Demo/);
     assert.match(betaPathHtml, /Beta Demo/);
 
+    const unauthorizedTunnel = startProcess("cli-denied", [
+      "bin/railway-tunnel.js",
+      "--server",
+      pathRelayBaseUrl,
+      "--port",
+      `${firstPagePort}:deniedalpha`,
+    ]);
+    const deniedExit = await waitForExit(unauthorizedTunnel);
+    assert.equal(deniedExit.code, 1);
+
     process.stdout.write(
       `\nVerified path-routed tunnel URLs: ${pathByPort.get(firstPagePort).publicUrl} and ${pathByPort.get(secondPagePort).publicUrl}\n`,
     );
+    process.stdout.write("Verified password rejection for an unauthorized tunnel client\n");
 
     const hostRelayPort = await findAvailablePort(8181);
     const hostRelayBaseUrl = `http://127.0.0.1:${hostRelayPort}`;
@@ -232,6 +268,7 @@ async function main() {
       PORT: String(hostRelayPort),
       PUBLIC_BASE_URL: hostRelayBaseUrl,
       PUBLIC_WILDCARD_DOMAIN: "tunnels.example.test",
+      TUNNEL_PASSWORD: sharedPassword,
     });
     await waitForHttp(`${hostRelayBaseUrl}/health`);
 
@@ -239,6 +276,8 @@ async function main() {
       "bin/railway-tunnel.js",
       "--server",
       hostRelayBaseUrl,
+      "--pass",
+      sharedPassword,
       "--port",
       `${firstPagePort}:alphahost`,
       "--port",

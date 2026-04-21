@@ -52,13 +52,13 @@ npm install
 Expose a local port through the live Railway relay:
 
 ```bash
-npx railway-port-tunnel --port 3500
+npx railway-port-tunnel --pass 31415 --port 3500
 ```
 
 Expose multiple ports at once:
 
 ```bash
-npx railway-port-tunnel --port 3000:app --port 3500:admin
+npx railway-port-tunnel --pass 31415 --port 3000:app --port 3500:admin
 ```
 
 That prints one URL per exposed port and keeps both tunnels alive in the same process.
@@ -70,6 +70,7 @@ https://relay-production-55c2.up.railway.app
 ```
 
 Override it with `--server` or the `RAILWAY_TUNNEL_SERVER_URL` environment variable when needed.
+Set the shared secret with `--pass` or `RAILWAY_TUNNEL_PASSWORD`.
 
 Start the relay server:
 
@@ -92,13 +93,13 @@ npm run demo:page
 Start the tunnel CLI against the local relay:
 
 ```bash
-npm run tunnel -- --server http://127.0.0.1:8080 --port 3500
+npm run tunnel -- --server http://127.0.0.1:8080 --pass 31415 --port 3500
 ```
 
 Or expose two ports together:
 
 ```bash
-npm run tunnel -- --server http://127.0.0.1:8080 --port 3000:app --port 3500:admin
+npm run tunnel -- --server http://127.0.0.1:8080 --pass 31415 --port 3000:app --port 3500:admin
 ```
 
 The command prints a URL like:
@@ -131,6 +132,7 @@ Options:
 - `--port`, `-p`: Local port to expose. Repeat it to expose multiple ports. Supports `<port:id>` syntax.
 - `--server`, `-s`: Relay base URL
 - `--id`, `-i`: Optional fixed tunnel ID. For multi-port usage, prefer inline `<port:id>`.
+- `--pass`, `-P`: Shared tunnel password used during registration
 - `--host`, `-H`: Local host to forward to, default `127.0.0.1`
 - `--help`, `-h`: Show usage
 
@@ -148,7 +150,8 @@ Deployment steps:
 3. Deploy it.
 4. In Railway service settings, generate a public domain.
 5. Set `PUBLIC_BASE_URL` to that generated domain, for example `https://your-app.up.railway.app`.
-6. Redeploy so the tunnel URLs use the final public base URL.
+6. Set `TUNNEL_PASSWORD` to your shared secret, for example `31415`.
+7. Redeploy so the tunnel URLs use the final public base URL and enforce registration auth.
 
 For host-based subdomain URLs on Railway:
 
@@ -180,7 +183,8 @@ npx railway-port-tunnel --server https://your-relay-host --port 3500
 
 ## Security and limitations
 
-- There is no authentication yet.
+- Registration authentication is a single shared secret and is not user-specific.
+- Public tunneled traffic is not separately authenticated once a tunnel is registered.
 - Tunnel IDs are guessable unless you supply long custom IDs.
 - Large uploads/downloads are buffered rather than streamed.
 - WebSocket disconnects trigger reconnect attempts from the CLI, but in-flight requests fail.
