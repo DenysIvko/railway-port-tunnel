@@ -5,6 +5,12 @@
 - A relay server you deploy to Railway or any Heroku-style Node host
 - A CLI you run locally to expose `localhost:<port>` through the relay
 
+In this repo:
+
+- The Railway-facing proxy service is [server/index.js](/Users/fk/vscode/tunnel/server/index.js)
+- The local CLI is [bin/railway-tunnel.js](/Users/fk/vscode/tunnel/bin/railway-tunnel.js)
+- Railway deployment config is [railway.json](/Users/fk/vscode/tunnel/railway.json)
+
 The relay gives each client a URL in the form:
 
 ```text
@@ -38,6 +44,12 @@ Start the relay server:
 
 ```bash
 npm start
+```
+
+Or start the relay plus demo page together:
+
+```bash
+npm run demo:stack
 ```
 
 Start the demo page on `localhost:3500`:
@@ -86,13 +98,23 @@ Options:
 
 ## Deploying the relay to Railway
 
+This repo now includes [railway.json](/Users/fk/vscode/tunnel/railway.json), which sets:
+
+- Start command: `npm start`
+- Healthcheck: `/health`
+
+Deployment steps:
+
 1. Push this repo to GitHub.
-2. Create a new Railway service from the repo.
-3. Set the service start command to `npm start` if Railway does not infer it automatically.
-4. Set `PUBLIC_BASE_URL` to your deployed relay URL, for example `https://your-app.up.railway.app`.
-5. Deploy.
+2. In Railway, create a new service from that repo.
+3. Deploy it.
+4. In Railway service settings, generate a public domain.
+5. Set `PUBLIC_BASE_URL` to that generated domain, for example `https://your-app.up.railway.app`.
+6. Redeploy so the tunnel URLs use the final public base URL.
 
 The server also honors the standard platform `PORT` environment variable, so it works on Railway and Heroku-style hosts.
+
+Example local env values are in [.env.example](/Users/fk/vscode/tunnel/.env.example).
 
 ## Publishing the CLI to npm
 

@@ -127,19 +127,20 @@ async function main() {
     PORT: String(relayPort),
     PUBLIC_BASE_URL: relayBaseUrl,
   });
-  const tunnel = startProcess("cli", [
-    "bin/railway-tunnel.js",
-    "--server",
-    relayBaseUrl,
-    "--port",
-    String(pagePort),
-    "--id",
-    "e2etest",
-  ]);
+  let tunnel;
 
   try {
     await waitForHttp(`${relayBaseUrl}/health`);
     await waitForHttp(`http://127.0.0.1:${pagePort}`);
+    tunnel = startProcess("cli", [
+      "bin/railway-tunnel.js",
+      "--server",
+      relayBaseUrl,
+      "--port",
+      String(pagePort),
+      "--id",
+      "e2etest",
+    ]);
     const publicUrl = await waitForTunnelUrl(tunnel);
     const response = await waitForHttp(publicUrl);
     const html = await response.text();

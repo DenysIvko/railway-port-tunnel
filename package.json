@@ -11,11 +11,13 @@
     "src",
     "server",
     "README.md",
-    "Procfile"
+    "Procfile",
+    "railway.json"
   ],
   "scripts": {
     "start": "node server/index.js",
     "start:server": "node server/index.js",
+    "demo:stack": "node scripts/demo-stack.js",
     "demo:page": "node examples/test-page.js",
     "tunnel": "node ./bin/railway-tunnel.js",
     "test:e2e": "node scripts/e2e-test.js"
