@@ -13,7 +13,7 @@
   },
   "main": "src/client.js",
   "bin": {
-    "railway-tunnel": "./bin/railway-tunnel.js"
+    "railway-tunnel": "bin/railway-tunnel.js"
   },
   "files": [
     "bin",
