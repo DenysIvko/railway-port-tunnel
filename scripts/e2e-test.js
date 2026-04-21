@@ -11,6 +11,7 @@ function startProcess(name, args, env = {}) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.collectedStdout = "";
+  child.collectedStderr = "";
 
   child.stdout.on("data", (chunk) => {
     child.collectedStdout += chunk.toString();
@@ -18,6 +19,7 @@ function startProcess(name, args, env = {}) {
   });
 
   child.stderr.on("data", (chunk) => {
+    child.collectedStderr += chunk.toString();
     process.stderr.write(`[${name}] ${chunk}`);
   });
 
@@ -231,7 +233,7 @@ async function main() {
       sharedPassword,
       "--port",
       String(firstPagePort),
-      "--id",
+      "--subdomain",
       "alpha",
     ]);
     pathTunnelBeta = startProcess("cli-path-beta", [
@@ -242,7 +244,7 @@ async function main() {
       sharedPassword,
       "--port",
       String(secondPagePort),
-      "--id",
+      "--subdomain",
       "beta",
     ]);
 
@@ -267,11 +269,12 @@ async function main() {
       pathRelayBaseUrl,
       "--port",
       String(firstPagePort),
-      "--id",
+      "--subdomain",
       "deniedalpha",
     ]);
     const deniedExit = await waitForExit(unauthorizedTunnel);
     assert.equal(deniedExit.code, 1);
+    assert.match(unauthorizedTunnel.collectedStderr, /Invalid tunnel password/);
 
     process.stdout.write(
       `\nVerified path-routed tunnel URLs from separate CLI processes: ${alphaPathRegistration.publicUrl} and ${betaPathRegistration.publicUrl}\n`,
@@ -296,7 +299,7 @@ async function main() {
       sharedPassword,
       "--port",
       String(firstPagePort),
-      "--id",
+      "--subdomain",
       "alphahost",
     ]);
     hostTunnelBeta = startProcess("cli-host-beta", [
@@ -307,7 +310,7 @@ async function main() {
       sharedPassword,
       "--port",
       String(secondPagePort),
-      "--id",
+      "--subdomain",
       "betahost",
     ]);
 
@@ -331,8 +334,29 @@ async function main() {
     assert.match(alphaHostResponse.body, /Alpha Demo/);
     assert.match(betaHostResponse.body, /Beta Demo/);
 
+    const hostTunnelConflict = startProcess("cli-host-conflict", [
+      "bin/railway-tunnel.js",
+      "--server",
+      hostRelayBaseUrl,
+      "--pass",
+      sharedPassword,
+      "--port",
+      String(secondPagePort),
+      "--subdomain",
+      "alphahost",
+    ]);
+    const conflictExit = await waitForExit(hostTunnelConflict);
+    assert.equal(conflictExit.code, 1);
+    assert.match(
+      hostTunnelConflict.collectedStderr,
+      /Requested subdomain "alphahost\.tunnels\.example\.test" is already in use\./,
+    );
+
     process.stdout.write(
       `Verified host-routed tunnel URLs from separate CLI processes: ${hostAlphaRegistration.publicUrl} and ${hostBetaRegistration.publicUrl}\n`,
+    );
+    process.stdout.write(
+      "Verified requested subdomain collision fails with a clear error\n",
     );
   } finally {
     await Promise.all([

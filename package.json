@@ -1,6 +1,6 @@
 {
   "name": "railway-port-tunnel",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "A small ngrok-style tunnel with a deployable relay server and local CLI.",
   "author": "Denys Ivko",
   "homepage": "https://github.com/DenysIvko/railway-port-tunnel#readme",

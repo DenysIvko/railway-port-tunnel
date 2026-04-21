@@ -16,7 +16,8 @@ function printHelp() {
 Options:
   -p, --port <port>     Local port to expose
   -s, --server <url>    Relay base URL (default: ${defaultServerUrl})
-  -i, --id <id>         Optional fixed tunnel ID
+  -n, --subdomain <id>  Requested subdomain name
+  -i, --id <id>         Legacy alias for --subdomain
   -P, --pass <secret>   Shared tunnel password
   -H, --host <host>     Local host to expose (default: 127.0.0.1)
   -h, --help            Show this help
@@ -54,10 +55,10 @@ function parsePort(value) {
 function parseArgs(argv) {
   const options = {
     host: "127.0.0.1",
-    id: null,
     password: defaultTunnelPassword,
     port: null,
     server: defaultServerUrl,
+    tunnelId: null,
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -84,12 +85,19 @@ function parseArgs(argv) {
       continue;
     }
 
-    if (argument === "--id" || argument === "-i") {
-      if (options.id) {
-        throw new Error("Only one --id value is allowed per command.");
+    if (
+      argument === "--subdomain" ||
+      argument === "-n" ||
+      argument === "--id" ||
+      argument === "-i"
+    ) {
+      if (options.tunnelId) {
+        throw new Error(
+          "Only one requested subdomain value is allowed per command.",
+        );
       }
 
-      options.id = parseTunnelId(argv[index + 1]);
+      options.tunnelId = parseTunnelId(argv[index + 1]);
       index += 1;
       continue;
     }
@@ -130,7 +138,7 @@ function buildTunnelConfig(options) {
 
   return {
     port: options.port,
-    tunnelId: options.id || createTunnelId(),
+    tunnelId: options.tunnelId || createTunnelId(),
   };
 }
 

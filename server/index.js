@@ -24,6 +24,14 @@ const maxBodySize = 10 * 1024 * 1024;
 const tunnelSockets = new Map();
 const pendingResponses = new Map();
 
+function formatTunnelConflictError(tunnelId) {
+  if (wildcardBaseDomain) {
+    return `Requested subdomain "${tunnelId}.${wildcardBaseDomain}" is already in use.`;
+  }
+
+  return `Tunnel ID "${tunnelId}" is already in use.`;
+}
+
 function sendJson(ws, payload) {
   if (ws.readyState !== WebSocket.OPEN) {
     throw new Error("Tunnel socket is not connected.");
@@ -224,7 +232,7 @@ wsServer.on("connection", (ws) => {
       ) {
         sendJson(ws, {
           type: "error",
-          error: `Tunnel ID "${tunnelId}" is already in use.`,
+          error: formatTunnelConflictError(tunnelId),
         });
         ws.close();
         return;

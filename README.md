@@ -55,6 +55,15 @@ Expose a local port through the live Railway relay:
 npx railway-port-tunnel --pass 31415 --port 3500
 ```
 
+Request a specific subdomain:
+
+```bash
+npx railway-port-tunnel --pass 31415 --port 3000 --subdomain admin
+```
+
+If `admin` is available, the relay returns `https://admin.request-tunnel.online/`.
+If it is already taken, the CLI exits with a clear error instead of silently choosing another URL.
+
 Open another tunnel from the same machine in a second terminal:
 
 ```bash
@@ -125,7 +134,8 @@ Options:
 
 - `--port`, `-p`: Local port to expose
 - `--server`, `-s`: Relay base URL
-- `--id`, `-i`: Optional fixed tunnel ID
+- `--subdomain`, `-n`: Request a specific subdomain name
+- `--id`, `-i`: Legacy alias for `--subdomain`
 - `--pass`, `-P`: Shared tunnel password used during registration
 - `--host`, `-H`: Local host to forward to, default `127.0.0.1`
 - `--help`, `-h`: Show usage
