@@ -3,10 +3,12 @@ const { randomUUID } = require("node:crypto");
 const WebSocket = require("ws");
 const {
   applyHeaders,
+  buildPublicUrl,
   decodeBody,
   encodeBody,
   extractTunnelRequest,
   normalizeHeaders,
+  normalizeWildcardBaseDomain,
 } = require("../src/protocol");
 
 const { WebSocketServer } = WebSocket;
@@ -14,6 +16,9 @@ const { WebSocketServer } = WebSocket;
 const port = Number(process.env.PORT || 8080);
 const publicBaseUrl =
   process.env.PUBLIC_BASE_URL || `http://127.0.0.1:${port}`;
+const wildcardBaseDomain = normalizeWildcardBaseDomain(
+  process.env.PUBLIC_WILDCARD_DOMAIN,
+);
 const maxBodySize = 10 * 1024 * 1024;
 const tunnelSockets = new Map();
 const pendingResponses = new Map();
@@ -75,6 +80,72 @@ function releasePendingRequestsForSocket(ws, error) {
 }
 
 const server = http.createServer(async (request, response) => {
+  const tunnelRequest = extractTunnelRequest(
+    request.url,
+    request.headers.host,
+    wildcardBaseDomain,
+  );
+
+  if (tunnelRequest) {
+    const ws = tunnelSockets.get(tunnelRequest.tunnelId);
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      sendTextResponse(response, 404, "Tunnel not connected.");
+      return;
+    }
+
+    try {
+      const requestBody = await readRequestBody(request);
+      const requestId = randomUUID();
+      const forwardedHeaders = normalizeHeaders(request.headers, {
+        dropHost: true,
+        forceIdentityEncoding: true,
+      });
+
+      forwardedHeaders["x-forwarded-host"] = request.headers.host || "";
+      forwardedHeaders["x-forwarded-proto"] = request.socket.encrypted
+        ? "https"
+        : "http";
+      forwardedHeaders["x-forwarded-for"] = request.socket.remoteAddress || "";
+      forwardedHeaders["x-tunnel-id"] = tunnelRequest.tunnelId;
+
+      const tunnelResponse = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          pendingResponses.delete(requestId);
+          reject(new Error("Tunnel request timed out after 30 seconds."));
+        }, 30_000);
+
+        pendingResponses.set(requestId, { ws, timeout, resolve, reject });
+
+        try {
+          sendJson(ws, {
+            type: "proxy_request",
+            requestId,
+            method: request.method || "GET",
+            path: tunnelRequest.forwardPath,
+            headers: forwardedHeaders,
+            body: encodeBody(requestBody),
+          });
+        } catch (error) {
+          clearTimeout(timeout);
+          pendingResponses.delete(requestId);
+          reject(error);
+        }
+      });
+
+      response.statusCode = tunnelResponse.statusCode || 200;
+      if (tunnelResponse.statusMessage) {
+        response.statusMessage = tunnelResponse.statusMessage;
+      }
+
+      applyHeaders(response, normalizeHeaders(tunnelResponse.headers));
+      response.end(decodeBody(tunnelResponse.body));
+    } catch (error) {
+      const statusCode = error.message.includes("timed out") ? 504 : 502;
+      sendTextResponse(response, statusCode, error.message);
+    }
+    return;
+  }
+
   if (request.url === "/health") {
     sendJsonResponse(response, 200, { status: "ok" });
     return;
@@ -83,79 +154,24 @@ const server = http.createServer(async (request, response) => {
   if (request.url === "/" || request.url === "") {
     sendJsonResponse(response, 200, {
       status: "ok",
-      usage: "Connect the CLI, then open /t/<tunnel-id>.",
+      usage: wildcardBaseDomain
+        ? `Connect the CLI, then open /t/<tunnel-id> or https://<tunnel-id>.${wildcardBaseDomain}`
+        : "Connect the CLI, then open /t/<tunnel-id>.",
       publicBaseUrl,
+      wildcardBaseDomain,
+      routingMode: wildcardBaseDomain ? "path+host" : "path",
       connectedTunnels: tunnelSockets.size,
     });
     return;
   }
 
-  const tunnelRequest = extractTunnelRequest(request.url);
-  if (!tunnelRequest) {
-    sendTextResponse(
-      response,
-      404,
-      "Unknown route. Use /t/<tunnel-id> after a tunnel is registered.",
-    );
-    return;
-  }
-
-  const ws = tunnelSockets.get(tunnelRequest.tunnelId);
-  if (!ws || ws.readyState !== WebSocket.OPEN) {
-    sendTextResponse(response, 404, "Tunnel not connected.");
-    return;
-  }
-
-  try {
-    const requestBody = await readRequestBody(request);
-    const requestId = randomUUID();
-    const forwardedHeaders = normalizeHeaders(request.headers, {
-      dropHost: true,
-      forceIdentityEncoding: true,
-    });
-
-    forwardedHeaders["x-forwarded-host"] = request.headers.host || "";
-    forwardedHeaders["x-forwarded-proto"] = request.socket.encrypted
-      ? "https"
-      : "http";
-    forwardedHeaders["x-forwarded-for"] = request.socket.remoteAddress || "";
-    forwardedHeaders["x-tunnel-id"] = tunnelRequest.tunnelId;
-
-    const tunnelResponse = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        pendingResponses.delete(requestId);
-        reject(new Error("Tunnel request timed out after 30 seconds."));
-      }, 30_000);
-
-      pendingResponses.set(requestId, { ws, timeout, resolve, reject });
-
-      try {
-        sendJson(ws, {
-          type: "proxy_request",
-          requestId,
-          method: request.method || "GET",
-          path: tunnelRequest.forwardPath,
-          headers: forwardedHeaders,
-          body: encodeBody(requestBody),
-        });
-      } catch (error) {
-        clearTimeout(timeout);
-        pendingResponses.delete(requestId);
-        reject(error);
-      }
-    });
-
-    response.statusCode = tunnelResponse.statusCode || 200;
-    if (tunnelResponse.statusMessage) {
-      response.statusMessage = tunnelResponse.statusMessage;
-    }
-
-    applyHeaders(response, normalizeHeaders(tunnelResponse.headers));
-    response.end(decodeBody(tunnelResponse.body));
-  } catch (error) {
-    const statusCode = error.message.includes("timed out") ? 504 : 502;
-    sendTextResponse(response, statusCode, error.message);
-  }
+  sendTextResponse(
+    response,
+    404,
+    wildcardBaseDomain
+      ? `Unknown route. Use /t/<tunnel-id> or https://<tunnel-id>.${wildcardBaseDomain} after a tunnel is registered.`
+      : "Unknown route. Use /t/<tunnel-id> after a tunnel is registered.",
+  );
 });
 
 const wsServer = new WebSocketServer({ server, path: "/ws" });
@@ -209,7 +225,11 @@ wsServer.on("connection", (ws) => {
       sendJson(ws, {
         type: "registered",
         tunnelId,
-        publicUrl: new URL(`/t/${tunnelId}`, publicBaseUrl).toString(),
+        publicUrl: buildPublicUrl(
+          publicBaseUrl,
+          tunnelId,
+          wildcardBaseDomain,
+        ),
       });
       return;
     }

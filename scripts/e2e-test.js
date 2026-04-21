@@ -1,5 +1,6 @@
 const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
+const http = require("node:http");
 const net = require("node:net");
 const { setTimeout: delay } = require("node:timers/promises");
 
@@ -41,13 +42,14 @@ async function waitForHttp(url, timeoutMs = 10_000) {
   throw new Error(`Timed out waiting for ${url}`);
 }
 
-async function waitForTunnelUrl(child, timeoutMs = 10_000) {
+async function waitForTunnelUrls(child, expectedCount, timeoutMs = 10_000) {
   return new Promise((resolve, reject) => {
     let buffered = "";
+    const registrations = [];
 
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error("Timed out waiting for the tunnel URL."));
+      reject(new Error("Timed out waiting for tunnel URLs."));
     }, timeoutMs);
 
     function cleanup() {
@@ -68,9 +70,22 @@ async function waitForTunnelUrl(child, timeoutMs = 10_000) {
 
       for (const line of lines) {
         const trimmed = line.trim();
-        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        const match = trimmed.match(
+          /^(?:(\d+)\s+->\s+)?(https?:\/\/[^\s]+)$/,
+        );
+
+        if (!match) {
+          continue;
+        }
+
+        registrations.push({
+          port: match[1] ? Number(match[1]) : null,
+          publicUrl: match[2],
+        });
+
+        if (registrations.length >= expectedCount) {
           cleanup();
-          resolve(trimmed);
+          resolve(registrations);
           return;
         }
       }
@@ -78,6 +93,41 @@ async function waitForTunnelUrl(child, timeoutMs = 10_000) {
 
     child.stdout.on("data", onData);
     child.on("exit", onExit);
+  });
+}
+
+async function requestWithHostHeader(publicUrl, relayPort) {
+  const url = new URL(publicUrl);
+
+  return new Promise((resolve, reject) => {
+    const request = http.request(
+      {
+        host: "127.0.0.1",
+        port: relayPort,
+        path: `${url.pathname}${url.search}`,
+        method: "GET",
+        headers: {
+          host: url.host,
+        },
+      },
+      (response) => {
+        const chunks = [];
+
+        response.on("data", (chunk) => {
+          chunks.push(chunk);
+        });
+
+        response.on("end", () => {
+          resolve({
+            body: Buffer.concat(chunks).toString("utf8"),
+            statusCode: response.statusCode || 0,
+          });
+        });
+      },
+    );
+
+    request.on("error", reject);
+    request.end();
   });
 }
 
@@ -116,41 +166,122 @@ async function terminate(child) {
 }
 
 async function main() {
-  const pagePort = await findAvailablePort(3500);
-  const relayPort = await findAvailablePort(8080);
-  const relayBaseUrl = `http://127.0.0.1:${relayPort}`;
-
-  const demoPage = startProcess("page", ["examples/test-page.js"], {
-    PORT: String(pagePort),
+  const firstPagePort = await findAvailablePort(3500);
+  const firstPage = startProcess("page-a", ["examples/test-page.js"], {
+    PAGE_NAME: "Alpha Demo",
+    PORT: String(firstPagePort),
   });
-  const relay = startProcess("relay", ["server/index.js"], {
-    PORT: String(relayPort),
-    PUBLIC_BASE_URL: relayBaseUrl,
-  });
-  let tunnel;
+  let secondPage;
+  let pathRelay;
+  let hostRelay;
+  let pathTunnel;
+  let hostTunnel;
 
   try {
-    await waitForHttp(`${relayBaseUrl}/health`);
-    await waitForHttp(`http://127.0.0.1:${pagePort}`);
-    tunnel = startProcess("cli", [
+    await waitForHttp(`http://127.0.0.1:${firstPagePort}`);
+
+    const secondPagePort = await findAvailablePort(3600);
+    secondPage = startProcess("page-b", ["examples/test-page.js"], {
+      PAGE_NAME: "Beta Demo",
+      PORT: String(secondPagePort),
+    });
+    await waitForHttp(`http://127.0.0.1:${secondPagePort}`);
+
+    const pathRelayPort = await findAvailablePort(8080);
+    const pathRelayBaseUrl = `http://127.0.0.1:${pathRelayPort}`;
+    pathRelay = startProcess("relay-path", ["server/index.js"], {
+      PORT: String(pathRelayPort),
+      PUBLIC_BASE_URL: pathRelayBaseUrl,
+    });
+    await waitForHttp(`${pathRelayBaseUrl}/health`);
+
+    pathTunnel = startProcess("cli-path", [
       "bin/railway-tunnel.js",
       "--server",
-      relayBaseUrl,
+      pathRelayBaseUrl,
       "--port",
-      String(pagePort),
-      "--id",
-      "e2etest",
+      `${firstPagePort}:alpha`,
+      "--port",
+      `${secondPagePort}:beta`,
     ]);
-    const publicUrl = await waitForTunnelUrl(tunnel);
-    const response = await waitForHttp(publicUrl);
-    const html = await response.text();
 
-    assert.match(html, /Tunnel Demo/);
-    assert.match(html, /served from your local machine through the tunnel/i);
+    const pathRegistrations = await waitForTunnelUrls(pathTunnel, 2);
+    const pathByPort = new Map(
+      pathRegistrations.map((registration) => [registration.port, registration]),
+    );
 
-    process.stdout.write(`\nVerified public tunnel URL: ${publicUrl}\n`);
+    const alphaPathResponse = await waitForHttp(
+      pathByPort.get(firstPagePort).publicUrl,
+    );
+    const betaPathResponse = await waitForHttp(
+      pathByPort.get(secondPagePort).publicUrl,
+    );
+    const alphaPathHtml = await alphaPathResponse.text();
+    const betaPathHtml = await betaPathResponse.text();
+
+    assert.match(alphaPathHtml, /Alpha Demo/);
+    assert.match(betaPathHtml, /Beta Demo/);
+
+    process.stdout.write(
+      `\nVerified path-routed tunnel URLs: ${pathByPort.get(firstPagePort).publicUrl} and ${pathByPort.get(secondPagePort).publicUrl}\n`,
+    );
+
+    const hostRelayPort = await findAvailablePort(8181);
+    const hostRelayBaseUrl = `http://127.0.0.1:${hostRelayPort}`;
+    hostRelay = startProcess("relay-host", ["server/index.js"], {
+      PORT: String(hostRelayPort),
+      PUBLIC_BASE_URL: hostRelayBaseUrl,
+      PUBLIC_WILDCARD_DOMAIN: "tunnels.example.test",
+    });
+    await waitForHttp(`${hostRelayBaseUrl}/health`);
+
+    hostTunnel = startProcess("cli-host", [
+      "bin/railway-tunnel.js",
+      "--server",
+      hostRelayBaseUrl,
+      "--port",
+      `${firstPagePort}:alphahost`,
+      "--port",
+      `${secondPagePort}:betahost`,
+    ]);
+
+    const hostRegistrations = await waitForTunnelUrls(hostTunnel, 2);
+    const hostAlphaRegistration = hostRegistrations.find((registration) =>
+      registration.publicUrl.includes("alphahost."),
+    );
+    const hostBetaRegistration = hostRegistrations.find((registration) =>
+      registration.publicUrl.includes("betahost."),
+    );
+
+    assert.ok(hostAlphaRegistration, "Missing alpha host-routed tunnel URL.");
+    assert.ok(hostBetaRegistration, "Missing beta host-routed tunnel URL.");
+
+    const alphaHostResponse = await requestWithHostHeader(
+      hostAlphaRegistration.publicUrl,
+      hostRelayPort,
+    );
+    const betaHostResponse = await requestWithHostHeader(
+      hostBetaRegistration.publicUrl,
+      hostRelayPort,
+    );
+
+    assert.equal(alphaHostResponse.statusCode, 200);
+    assert.equal(betaHostResponse.statusCode, 200);
+    assert.match(alphaHostResponse.body, /Alpha Demo/);
+    assert.match(betaHostResponse.body, /Beta Demo/);
+
+    process.stdout.write(
+      `Verified host-routed tunnel URLs: ${hostAlphaRegistration.publicUrl} and ${hostBetaRegistration.publicUrl}\n`,
+    );
   } finally {
-    await Promise.all([terminate(tunnel), terminate(relay), terminate(demoPage)]);
+    await Promise.all([
+      terminate(hostTunnel),
+      terminate(pathTunnel),
+      terminate(hostRelay),
+      terminate(pathRelay),
+      terminate(secondPage),
+      terminate(firstPage),
+    ]);
   }
 }
 

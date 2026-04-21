@@ -6,22 +6,60 @@ const { createTunnelId } = require("../src/protocol");
 const defaultServerUrl =
   process.env.RAILWAY_TUNNEL_SERVER_URL ||
   "https://relay-production-55c2.up.railway.app";
+const tunnelIdPattern = /^[a-zA-Z0-9_-]{4,64}$/;
 
 function printHelp() {
-  process.stdout.write(`Usage: railway-tunnel --port <port> [options]
+  process.stdout.write(`Usage: railway-tunnel --port <port[:id]> [--port <port[:id]> ...] [options]
 
 Options:
-  -p, --port <port>     Local port to expose
+  -p, --port <port[:id]>
+                        Local port to expose. Repeat to expose multiple ports.
+                        Example: --port 3500:docs --port 3600:admin
   -s, --server <url>    Relay base URL (default: ${defaultServerUrl})
-  -i, --id <id>         Optional fixed tunnel ID
+  -i, --id <id>         Optional fixed tunnel ID. Repeat to match multiple ports.
   -H, --host <host>     Local host to expose (default: 127.0.0.1)
   -h, --help            Show this help
 `);
 }
 
+function parseTunnelId(value) {
+  const tunnelId = String(value || "").trim();
+
+  if (!tunnelIdPattern.test(tunnelId)) {
+    throw new Error(
+      "Tunnel IDs must be 4-64 characters using letters, numbers, _ or -.",
+    );
+  }
+
+  return tunnelId;
+}
+
+function parsePortSpec(value) {
+  const rawValue = String(value || "").trim();
+  const match = rawValue.match(/^(\d{1,5})(?::([a-zA-Z0-9_-]{4,64}))?$/);
+
+  if (!match) {
+    throw new Error(
+      `Invalid port specification "${rawValue}". Use <port> or <port:id>.`,
+    );
+  }
+
+  const port = Number(match[1]);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`Invalid local port "${match[1]}".`);
+  }
+
+  return {
+    port,
+    tunnelId: match[2] ? parseTunnelId(match[2]) : null,
+  };
+}
+
 function parseArgs(argv) {
   const options = {
     host: "127.0.0.1",
+    ids: [],
+    ports: [],
     server: defaultServerUrl,
   };
 
@@ -34,7 +72,7 @@ function parseArgs(argv) {
     }
 
     if (argument === "--port" || argument === "-p") {
-      options.port = argv[index + 1];
+      options.ports.push(parsePortSpec(argv[index + 1]));
       index += 1;
       continue;
     }
@@ -46,7 +84,7 @@ function parseArgs(argv) {
     }
 
     if (argument === "--id" || argument === "-i") {
-      options.id = argv[index + 1];
+      options.ids.push(parseTunnelId(argv[index + 1]));
       index += 1;
       continue;
     }
@@ -57,8 +95,8 @@ function parseArgs(argv) {
       continue;
     }
 
-    if (!argument.startsWith("-") && !options.port) {
-      options.port = argument;
+    if (!argument.startsWith("-")) {
+      options.ports.push(parsePortSpec(argument));
       continue;
     }
 
@@ -66,6 +104,35 @@ function parseArgs(argv) {
   }
 
   return options;
+}
+
+function buildTunnelConfigs(options) {
+  if (options.ports.length === 0) {
+    throw new Error(
+      "You must provide at least one valid local port with --port <port>.",
+    );
+  }
+
+  if (options.ports.length > 1 && options.ids.length > 0) {
+    if (options.ids.length !== options.ports.length) {
+      throw new Error(
+        "When exposing multiple ports, provide one --id per --port or use inline <port:id> syntax.",
+      );
+    }
+  }
+
+  if (options.ids.length > options.ports.length) {
+    throw new Error("You provided more tunnel IDs than ports.");
+  }
+
+  return options.ports.map((portSpec, index) => ({
+    port: portSpec.port,
+    tunnelId:
+      portSpec.tunnelId ||
+      options.ids[index] ||
+      (options.ports.length === 1 && options.ids[0]) ||
+      createTunnelId(),
+  }));
 }
 
 async function main() {
@@ -76,38 +143,60 @@ async function main() {
     return;
   }
 
-  const port = Number(options.port);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("You must provide a valid local port with --port <port>.");
-  }
+  const tunnelConfigs = buildTunnelConfigs(options);
+  const multipleTunnels = tunnelConfigs.length > 1;
+  const clients = tunnelConfigs.map((tunnelConfig) => {
+    const prefix = multipleTunnels ? `[${tunnelConfig.port}] ` : "";
 
-  const tunnelId = options.id || createTunnelId();
-
-  const client = new TunnelClient({
-    serverUrl: options.server,
-    host: options.host,
-    port,
-    tunnelId,
-    logger: {
-      info(message) {
-        process.stderr.write(`${message}\n`);
+    return new TunnelClient({
+      serverUrl: options.server,
+      host: options.host,
+      port: tunnelConfig.port,
+      tunnelId: tunnelConfig.tunnelId,
+      logger: {
+        info(message) {
+          process.stderr.write(`${prefix}${message}\n`);
+        },
+        error(message) {
+          process.stderr.write(`${prefix}${message}\n`);
+        },
       },
-      error(message) {
-        process.stderr.write(`${message}\n`);
-      },
-    },
+    });
   });
 
   const shutdown = () => {
-    client.stop();
+    for (const client of clients) {
+      client.stop();
+    }
+
     process.exit(0);
   };
 
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  const registration = await client.start();
-  process.stdout.write(`${registration.publicUrl}\n`);
+  try {
+    const registrations = await Promise.all(
+      clients.map((client) => client.start()),
+    );
+
+    registrations.forEach((registration, index) => {
+      if (!multipleTunnels) {
+        process.stdout.write(`${registration.publicUrl}\n`);
+        return;
+      }
+
+      process.stdout.write(
+        `${tunnelConfigs[index].port} -> ${registration.publicUrl}\n`,
+      );
+    });
+  } catch (error) {
+    for (const client of clients) {
+      client.stop();
+    }
+
+    throw error;
+  }
 }
 
 main().catch((error) => {

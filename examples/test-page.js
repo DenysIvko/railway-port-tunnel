@@ -1,6 +1,7 @@
 const http = require("node:http");
 
 const port = Number(process.env.PORT || 3500);
+const pageName = process.env.PAGE_NAME || "Tunnel Demo";
 
 const server = http.createServer((request, response) => {
   response.statusCode = 200;
@@ -9,7 +10,7 @@ const server = http.createServer((request, response) => {
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Tunnel Demo</title>
+    <title>${pageName}</title>
     <style>
       body {
         font-family: sans-serif;
@@ -26,13 +27,16 @@ const server = http.createServer((request, response) => {
     </style>
   </head>
   <body>
-    <h1>Tunnel Demo</h1>
+    <h1>${pageName}</h1>
     <p>This page is being served from your local machine through the tunnel.</p>
+    <p>Served from local port: <code>${port}</code></p>
     <p>Requested path: <code>${request.url}</code></p>
   </body>
 </html>`);
 });
 
 server.listen(port, () => {
-  process.stdout.write(`Demo page listening on http://127.0.0.1:${port}\n`);
+  process.stdout.write(
+    `${pageName} listening on http://127.0.0.1:${port}\n`,
+  );
 });

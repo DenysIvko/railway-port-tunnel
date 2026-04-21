@@ -17,19 +17,28 @@ The relay gives each client a URL in the form:
 https://your-relay-host/t/<tunnel-id>
 ```
 
+If you configure a wildcard custom domain, the relay can also generate host-based URLs:
+
+```text
+https://<tunnel-id>.tunnels.example.com
+```
+
 Requests to that URL are proxied through the relay to the local machine running the CLI.
 
 ## How it works
 
 1. The CLI opens a WebSocket connection to the relay.
 2. The relay assigns or accepts a tunnel ID and prints a public URL.
-3. Incoming HTTP requests to `/t/<tunnel-id>` are serialized over WebSocket.
+3. Incoming HTTP requests to `/t/<tunnel-id>` or the matching tunnel subdomain are serialized over WebSocket.
 4. The CLI forwards each request to your local server and sends the response back.
+
+This implementation now supports multiple simultaneous tunnels from one CLI process by repeating `--port`.
 
 This implementation is intentionally simple:
 
 - HTTP request and response bodies are buffered in memory
-- Public routing is path-based, not wildcard-subdomain based
+- Railway's free `*.up.railway.app` domain uses path-based routing
+- Host-based subdomain routing is available when you configure a wildcard custom domain
 - It is designed for development and demos, not as a hardened production tunnel
 
 ## Local usage
@@ -45,6 +54,14 @@ Expose a local port through the live Railway relay:
 ```bash
 npx railway-port-tunnel --port 3500
 ```
+
+Expose multiple ports at once:
+
+```bash
+npx railway-port-tunnel --port 3000:app --port 3500:admin
+```
+
+That prints one URL per exposed port and keeps both tunnels alive in the same process.
 
 The CLI now defaults to the deployed relay:
 
@@ -78,6 +95,12 @@ Start the tunnel CLI against the local relay:
 npm run tunnel -- --server http://127.0.0.1:8080 --port 3500
 ```
 
+Or expose two ports together:
+
+```bash
+npm run tunnel -- --server http://127.0.0.1:8080 --port 3000:app --port 3500:admin
+```
+
 The command prints a URL like:
 
 ```text
@@ -95,6 +118,7 @@ npm run test:e2e
 ```
 
 This starts the relay, the demo page, the CLI, fetches the public tunnel URL, and verifies that the proxied HTML response comes back successfully.
+It also verifies multi-port routing and local host-based routing with a wildcard suffix.
 
 ## CLI usage
 
@@ -104,9 +128,9 @@ railway-tunnel --server https://your-relay-host --port 3500
 
 Options:
 
-- `--port`, `-p`: Local port to expose
+- `--port`, `-p`: Local port to expose. Repeat it to expose multiple ports. Supports `<port:id>` syntax.
 - `--server`, `-s`: Relay base URL
-- `--id`, `-i`: Optional fixed tunnel ID
+- `--id`, `-i`: Optional fixed tunnel ID. For multi-port usage, prefer inline `<port:id>`.
 - `--host`, `-H`: Local host to forward to, default `127.0.0.1`
 - `--help`, `-h`: Show usage
 
@@ -125,6 +149,14 @@ Deployment steps:
 4. In Railway service settings, generate a public domain.
 5. Set `PUBLIC_BASE_URL` to that generated domain, for example `https://your-app.up.railway.app`.
 6. Redeploy so the tunnel URLs use the final public base URL.
+
+For host-based subdomain URLs on Railway:
+
+1. Add a wildcard custom domain such as `*.tunnels.example.com` to the relay service.
+2. Set `PUBLIC_WILDCARD_DOMAIN=tunnels.example.com`.
+3. Redeploy.
+
+Without a wildcard custom domain, the relay still supports multiple simultaneous tunnels using distinct path URLs on the single Railway service domain.
 
 The server also honors the standard platform `PORT` environment variable, so it works on Railway and Heroku-style hosts.
 
