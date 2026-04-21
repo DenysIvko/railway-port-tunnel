@@ -10,8 +10,10 @@ function startProcess(name, args, env = {}) {
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
   });
+  child.collectedStdout = "";
 
   child.stdout.on("data", (chunk) => {
+    child.collectedStdout += chunk.toString();
     process.stdout.write(`[${name}] ${chunk}`);
   });
 
@@ -44,7 +46,7 @@ async function waitForHttp(url, timeoutMs = 10_000) {
 
 async function waitForTunnelUrls(child, expectedCount, timeoutMs = 10_000) {
   return new Promise((resolve, reject) => {
-    let buffered = "";
+    let buffered = child.collectedStdout || "";
     const registrations = [];
 
     const timer = setTimeout(() => {
@@ -93,6 +95,7 @@ async function waitForTunnelUrls(child, expectedCount, timeoutMs = 10_000) {
 
     child.stdout.on("data", onData);
     child.on("exit", onExit);
+    onData("");
   });
 }
 
@@ -196,8 +199,10 @@ async function main() {
   let secondPage;
   let pathRelay;
   let hostRelay;
-  let pathTunnel;
-  let hostTunnel;
+  let pathTunnelAlpha;
+  let pathTunnelBeta;
+  let hostTunnelAlpha;
+  let hostTunnelBeta;
 
   try {
     await waitForHttp(`http://127.0.0.1:${firstPagePort}`);
@@ -218,28 +223,37 @@ async function main() {
     });
     await waitForHttp(`${pathRelayBaseUrl}/health`);
 
-    pathTunnel = startProcess("cli-path", [
+    pathTunnelAlpha = startProcess("cli-path-alpha", [
       "bin/railway-tunnel.js",
       "--server",
       pathRelayBaseUrl,
       "--pass",
       sharedPassword,
       "--port",
-      `${firstPagePort}:alpha`,
+      String(firstPagePort),
+      "--id",
+      "alpha",
+    ]);
+    pathTunnelBeta = startProcess("cli-path-beta", [
+      "bin/railway-tunnel.js",
+      "--server",
+      pathRelayBaseUrl,
+      "--pass",
+      sharedPassword,
       "--port",
-      `${secondPagePort}:beta`,
+      String(secondPagePort),
+      "--id",
+      "beta",
     ]);
 
-    const pathRegistrations = await waitForTunnelUrls(pathTunnel, 2);
-    const pathByPort = new Map(
-      pathRegistrations.map((registration) => [registration.port, registration]),
-    );
+    const [alphaPathRegistration] = await waitForTunnelUrls(pathTunnelAlpha, 1);
+    const [betaPathRegistration] = await waitForTunnelUrls(pathTunnelBeta, 1);
 
     const alphaPathResponse = await waitForHttp(
-      pathByPort.get(firstPagePort).publicUrl,
+      alphaPathRegistration.publicUrl,
     );
     const betaPathResponse = await waitForHttp(
-      pathByPort.get(secondPagePort).publicUrl,
+      betaPathRegistration.publicUrl,
     );
     const alphaPathHtml = await alphaPathResponse.text();
     const betaPathHtml = await betaPathResponse.text();
@@ -252,13 +266,15 @@ async function main() {
       "--server",
       pathRelayBaseUrl,
       "--port",
-      `${firstPagePort}:deniedalpha`,
+      String(firstPagePort),
+      "--id",
+      "deniedalpha",
     ]);
     const deniedExit = await waitForExit(unauthorizedTunnel);
     assert.equal(deniedExit.code, 1);
 
     process.stdout.write(
-      `\nVerified path-routed tunnel URLs: ${pathByPort.get(firstPagePort).publicUrl} and ${pathByPort.get(secondPagePort).publicUrl}\n`,
+      `\nVerified path-routed tunnel URLs from separate CLI processes: ${alphaPathRegistration.publicUrl} and ${betaPathRegistration.publicUrl}\n`,
     );
     process.stdout.write("Verified password rejection for an unauthorized tunnel client\n");
 
@@ -272,25 +288,31 @@ async function main() {
     });
     await waitForHttp(`${hostRelayBaseUrl}/health`);
 
-    hostTunnel = startProcess("cli-host", [
+    hostTunnelAlpha = startProcess("cli-host-alpha", [
       "bin/railway-tunnel.js",
       "--server",
       hostRelayBaseUrl,
       "--pass",
       sharedPassword,
       "--port",
-      `${firstPagePort}:alphahost`,
+      String(firstPagePort),
+      "--id",
+      "alphahost",
+    ]);
+    hostTunnelBeta = startProcess("cli-host-beta", [
+      "bin/railway-tunnel.js",
+      "--server",
+      hostRelayBaseUrl,
+      "--pass",
+      sharedPassword,
       "--port",
-      `${secondPagePort}:betahost`,
+      String(secondPagePort),
+      "--id",
+      "betahost",
     ]);
 
-    const hostRegistrations = await waitForTunnelUrls(hostTunnel, 2);
-    const hostAlphaRegistration = hostRegistrations.find((registration) =>
-      registration.publicUrl.includes("alphahost."),
-    );
-    const hostBetaRegistration = hostRegistrations.find((registration) =>
-      registration.publicUrl.includes("betahost."),
-    );
+    const [hostAlphaRegistration] = await waitForTunnelUrls(hostTunnelAlpha, 1);
+    const [hostBetaRegistration] = await waitForTunnelUrls(hostTunnelBeta, 1);
 
     assert.ok(hostAlphaRegistration, "Missing alpha host-routed tunnel URL.");
     assert.ok(hostBetaRegistration, "Missing beta host-routed tunnel URL.");
@@ -310,12 +332,14 @@ async function main() {
     assert.match(betaHostResponse.body, /Beta Demo/);
 
     process.stdout.write(
-      `Verified host-routed tunnel URLs: ${hostAlphaRegistration.publicUrl} and ${hostBetaRegistration.publicUrl}\n`,
+      `Verified host-routed tunnel URLs from separate CLI processes: ${hostAlphaRegistration.publicUrl} and ${hostBetaRegistration.publicUrl}\n`,
     );
   } finally {
     await Promise.all([
-      terminate(hostTunnel),
-      terminate(pathTunnel),
+      terminate(hostTunnelBeta),
+      terminate(hostTunnelAlpha),
+      terminate(pathTunnelBeta),
+      terminate(pathTunnelAlpha),
       terminate(hostRelay),
       terminate(pathRelay),
       terminate(secondPage),

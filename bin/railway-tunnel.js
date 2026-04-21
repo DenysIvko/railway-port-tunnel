@@ -11,14 +11,12 @@ const defaultTunnelPassword =
 const tunnelIdPattern = /^[a-zA-Z0-9_-]{4,64}$/;
 
 function printHelp() {
-  process.stdout.write(`Usage: railway-tunnel --port <port[:id]> [--port <port[:id]> ...] [options]
+  process.stdout.write(`Usage: railway-tunnel --port <port> [options]
 
 Options:
-  -p, --port <port[:id]>
-                        Local port to expose. Repeat to expose multiple ports.
-                        Example: --port 3500:docs --port 3600:admin
+  -p, --port <port>     Local port to expose
   -s, --server <url>    Relay base URL (default: ${defaultServerUrl})
-  -i, --id <id>         Optional fixed tunnel ID. Repeat to match multiple ports.
+  -i, --id <id>         Optional fixed tunnel ID
   -P, --pass <secret>   Shared tunnel password
   -H, --host <host>     Local host to expose (default: 127.0.0.1)
   -h, --help            Show this help
@@ -37,14 +35,12 @@ function parseTunnelId(value) {
   return tunnelId;
 }
 
-function parsePortSpec(value) {
+function parsePort(value) {
   const rawValue = String(value || "").trim();
-  const match = rawValue.match(/^(\d{1,5})(?::([a-zA-Z0-9_-]{4,64}))?$/);
+  const match = rawValue.match(/^(\d{1,5})$/);
 
   if (!match) {
-    throw new Error(
-      `Invalid port specification "${rawValue}". Use <port> or <port:id>.`,
-    );
+    throw new Error(`Invalid port "${rawValue}". Use a value like 3000.`);
   }
 
   const port = Number(match[1]);
@@ -52,18 +48,15 @@ function parsePortSpec(value) {
     throw new Error(`Invalid local port "${match[1]}".`);
   }
 
-  return {
-    port,
-    tunnelId: match[2] ? parseTunnelId(match[2]) : null,
-  };
+  return port;
 }
 
 function parseArgs(argv) {
   const options = {
     host: "127.0.0.1",
-    ids: [],
+    id: null,
     password: defaultTunnelPassword,
-    ports: [],
+    port: null,
     server: defaultServerUrl,
   };
 
@@ -76,7 +69,11 @@ function parseArgs(argv) {
     }
 
     if (argument === "--port" || argument === "-p") {
-      options.ports.push(parsePortSpec(argv[index + 1]));
+      if (options.port != null) {
+        throw new Error("Only one --port value is allowed per command.");
+      }
+
+      options.port = parsePort(argv[index + 1]);
       index += 1;
       continue;
     }
@@ -88,7 +85,11 @@ function parseArgs(argv) {
     }
 
     if (argument === "--id" || argument === "-i") {
-      options.ids.push(parseTunnelId(argv[index + 1]));
+      if (options.id) {
+        throw new Error("Only one --id value is allowed per command.");
+      }
+
+      options.id = parseTunnelId(argv[index + 1]);
       index += 1;
       continue;
     }
@@ -106,7 +107,11 @@ function parseArgs(argv) {
     }
 
     if (!argument.startsWith("-")) {
-      options.ports.push(parsePortSpec(argument));
+      if (options.port != null) {
+        throw new Error("Only one port may be provided per command.");
+      }
+
+      options.port = parsePort(argument);
       continue;
     }
 
@@ -116,33 +121,17 @@ function parseArgs(argv) {
   return options;
 }
 
-function buildTunnelConfigs(options) {
-  if (options.ports.length === 0) {
+function buildTunnelConfig(options) {
+  if (options.port == null) {
     throw new Error(
-      "You must provide at least one valid local port with --port <port>.",
+      "You must provide one valid local port with --port <port>.",
     );
   }
 
-  if (options.ports.length > 1 && options.ids.length > 0) {
-    if (options.ids.length !== options.ports.length) {
-      throw new Error(
-        "When exposing multiple ports, provide one --id per --port or use inline <port:id> syntax.",
-      );
-    }
-  }
-
-  if (options.ids.length > options.ports.length) {
-    throw new Error("You provided more tunnel IDs than ports.");
-  }
-
-  return options.ports.map((portSpec, index) => ({
-    port: portSpec.port,
-    tunnelId:
-      portSpec.tunnelId ||
-      options.ids[index] ||
-      (options.ports.length === 1 && options.ids[0]) ||
-      createTunnelId(),
-  }));
+  return {
+    port: options.port,
+    tunnelId: options.id || createTunnelId(),
+  };
 }
 
 async function main() {
@@ -153,33 +142,25 @@ async function main() {
     return;
   }
 
-  const tunnelConfigs = buildTunnelConfigs(options);
-  const multipleTunnels = tunnelConfigs.length > 1;
-  const clients = tunnelConfigs.map((tunnelConfig) => {
-    const prefix = multipleTunnels ? `[${tunnelConfig.port}] ` : "";
-
-    return new TunnelClient({
-      serverUrl: options.server,
-      host: options.host,
-      password: options.password,
-      port: tunnelConfig.port,
-      tunnelId: tunnelConfig.tunnelId,
-      logger: {
-        info(message) {
-          process.stderr.write(`${prefix}${message}\n`);
-        },
-        error(message) {
-          process.stderr.write(`${prefix}${message}\n`);
-        },
+  const tunnelConfig = buildTunnelConfig(options);
+  const client = new TunnelClient({
+    serverUrl: options.server,
+    host: options.host,
+    password: options.password,
+    port: tunnelConfig.port,
+    tunnelId: tunnelConfig.tunnelId,
+    logger: {
+      info(message) {
+        process.stderr.write(`${message}\n`);
       },
-    });
+      error(message) {
+        process.stderr.write(`${message}\n`);
+      },
+    },
   });
 
   const shutdown = () => {
-    for (const client of clients) {
-      client.stop();
-    }
-
+    client.stop();
     process.exit(0);
   };
 
@@ -187,25 +168,10 @@ async function main() {
   process.on("SIGTERM", shutdown);
 
   try {
-    const registrations = await Promise.all(
-      clients.map((client) => client.start()),
-    );
-
-    registrations.forEach((registration, index) => {
-      if (!multipleTunnels) {
-        process.stdout.write(`${registration.publicUrl}\n`);
-        return;
-      }
-
-      process.stdout.write(
-        `${tunnelConfigs[index].port} -> ${registration.publicUrl}\n`,
-      );
-    });
+    const registration = await client.start();
+    process.stdout.write(`${registration.publicUrl}\n`);
   } catch (error) {
-    for (const client of clients) {
-      client.stop();
-    }
-
+    client.stop();
     throw error;
   }
 }

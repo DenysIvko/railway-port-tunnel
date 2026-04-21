@@ -32,7 +32,7 @@ Requests to that URL are proxied through the relay to the local machine running 
 3. Incoming HTTP requests to `/t/<tunnel-id>` or the matching tunnel subdomain are serialized over WebSocket.
 4. The CLI forwards each request to your local server and sends the response back.
 
-This implementation now supports multiple simultaneous tunnels from one CLI process by repeating `--port`.
+This implementation supports multiple simultaneous tunnels by running the CLI multiple times, whether from the same machine or from different machines.
 
 This implementation is intentionally simple:
 
@@ -55,13 +55,14 @@ Expose a local port through the live Railway relay:
 npx railway-port-tunnel --pass 31415 --port 3500
 ```
 
-Expose multiple ports at once:
+Open another tunnel from the same machine in a second terminal:
 
 ```bash
-npx railway-port-tunnel --pass 31415 --port 3000:app --port 3500:admin
+npx railway-port-tunnel --pass 31415 --port 3000
+npx railway-port-tunnel --pass 31415 --port 3500
 ```
 
-That prints one URL per exposed port and keeps both tunnels alive in the same process.
+Each command prints one unique public URL and keeps that single tunnel alive.
 
 The CLI now defaults to the deployed relay:
 
@@ -96,12 +97,6 @@ Start the tunnel CLI against the local relay:
 npm run tunnel -- --server http://127.0.0.1:8080 --pass 31415 --port 3500
 ```
 
-Or expose two ports together:
-
-```bash
-npm run tunnel -- --server http://127.0.0.1:8080 --pass 31415 --port 3000:app --port 3500:admin
-```
-
 The command prints a URL like:
 
 ```text
@@ -118,8 +113,7 @@ Run the automated local test:
 npm run test:e2e
 ```
 
-This starts the relay, the demo page, the CLI, fetches the public tunnel URL, and verifies that the proxied HTML response comes back successfully.
-It also verifies multi-port routing and local host-based routing with a wildcard suffix.
+This starts the relay, demo pages, and separate CLI processes, then verifies that distinct tunnel URLs proxy correctly in both path and host modes.
 
 ## CLI usage
 
@@ -129,9 +123,9 @@ railway-tunnel --server https://your-relay-host --port 3500
 
 Options:
 
-- `--port`, `-p`: Local port to expose. Repeat it to expose multiple ports. Supports `<port:id>` syntax.
+- `--port`, `-p`: Local port to expose
 - `--server`, `-s`: Relay base URL
-- `--id`, `-i`: Optional fixed tunnel ID. For multi-port usage, prefer inline `<port:id>`.
+- `--id`, `-i`: Optional fixed tunnel ID
 - `--pass`, `-P`: Shared tunnel password used during registration
 - `--host`, `-H`: Local host to forward to, default `127.0.0.1`
 - `--help`, `-h`: Show usage
@@ -159,7 +153,7 @@ For host-based subdomain URLs on Railway:
 2. Set `PUBLIC_WILDCARD_DOMAIN=tunnels.example.com`.
 3. Redeploy.
 
-Without a wildcard custom domain, the relay still supports multiple simultaneous tunnels using distinct path URLs on the single Railway service domain.
+Without a wildcard custom domain, the relay still supports multiple simultaneous tunnels using distinct path URLs on the single Railway service domain. With the wildcard custom domain configured, each separate tunnel command gets its own subdomain.
 
 The server also honors the standard platform `PORT` environment variable, so it works on Railway and Heroku-style hosts.
 
