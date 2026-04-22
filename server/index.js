@@ -94,7 +94,7 @@ function releasePendingRequestsForSocket(ws, error) {
   }
 }
 
-async function notifyTunnelCreated(publicUrl) {
+async function sendTunnelNotification(message) {
   if (!tunnelCreatedNotificationUrl || !tunnelCreatedNotificationToken) {
     return;
   }
@@ -106,7 +106,7 @@ async function notifyTunnelCreated(publicUrl) {
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      message: `Tunnel created: ${publicUrl}`,
+      message,
       label: tunnelCreatedNotificationLabel,
     }),
   });
@@ -117,6 +117,19 @@ async function notifyTunnelCreated(publicUrl) {
       `Tunnel notification failed with ${response.status}: ${responseText || response.statusText}`,
     );
   }
+}
+
+async function notifyTunnelCreated(publicUrl) {
+  await sendTunnelNotification(`Tunnel created: ${publicUrl}`);
+}
+
+function getRequestIp(request) {
+  const forwardedFor = request.headers["x-forwarded-for"];
+  if (typeof forwardedFor === "string" && forwardedFor.trim()) {
+    return forwardedFor.split(",")[0].trim().replace(/^::ffff:/, "");
+  }
+
+  return (request.socket.remoteAddress || "unknown").replace(/^::ffff:/, "");
 }
 
 const server = http.createServer(async (request, response) => {
@@ -217,7 +230,7 @@ const server = http.createServer(async (request, response) => {
 
 const wsServer = new WebSocketServer({ server, path: "/ws" });
 
-wsServer.on("connection", (ws) => {
+wsServer.on("connection", (ws, request) => {
   ws.isAlive = true;
 
   ws.on("pong", () => {
@@ -237,9 +250,15 @@ wsServer.on("connection", (ws) => {
 
     if (message.type === "register") {
       if (tunnelPassword && message.password !== tunnelPassword) {
+        const attemptedTunnelId = String(message.tunnelId || "").trim() || "unknown";
         sendJson(ws, {
           type: "error",
           error: "Invalid tunnel password.",
+        });
+        sendTunnelNotification(
+          `Tunnel auth failed: ${attemptedTunnelId} from ${getRequestIp(request)}`,
+        ).catch((error) => {
+          console.error(error.message);
         });
         ws.close();
         return;

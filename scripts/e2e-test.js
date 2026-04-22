@@ -348,8 +348,12 @@ async function main() {
     const deniedExit = await waitForExit(unauthorizedTunnel);
     assert.equal(deniedExit.code, 1);
     assert.match(unauthorizedTunnel.collectedStderr, /Invalid tunnel password/);
-    await delay(250);
-    assert.equal(receivedNotifications.length, 2);
+    await waitForCondition(() => receivedNotifications.length >= 3);
+    assert.deepEqual(receivedNotifications[2].body, {
+      message: "Tunnel auth failed: deniedalpha from 127.0.0.1",
+      label: "Tunnel",
+    });
+    assert.equal(receivedNotifications[2].authorization, notifierAuthHeader);
 
     process.stdout.write(
       `\nVerified path-routed tunnel URLs from separate CLI processes: ${alphaPathRegistration.publicUrl} and ${betaPathRegistration.publicUrl}\n`,
@@ -413,7 +417,7 @@ async function main() {
     assert.match(betaHostResponse.body, /Beta Demo/);
     await waitForCondition(() => receivedNotifications.length >= 4);
     assertNotificationBodiesEqual(
-      receivedNotifications.slice(2, 4).map((notification) => notification.body),
+      receivedNotifications.slice(3, 5).map((notification) => notification.body),
       [
         {
           message: `Tunnel created: ${hostAlphaRegistration.publicUrl}`,
@@ -444,7 +448,7 @@ async function main() {
       /Requested subdomain "alphahost\.tunnels\.example\.test" is already in use\./,
     );
     await delay(250);
-    assert.equal(receivedNotifications.length, 4);
+    assert.equal(receivedNotifications.length, 5);
 
     process.stdout.write(
       `Verified host-routed tunnel URLs from separate CLI processes: ${hostAlphaRegistration.publicUrl} and ${hostBetaRegistration.publicUrl}\n`,
@@ -453,7 +457,7 @@ async function main() {
       "Verified requested subdomain collision fails with a clear error\n",
     );
     process.stdout.write(
-      "Verified tunnel-created notifications are sent only for successful registrations\n",
+      "Verified successful registrations and invalid-password attempts send notifications\n",
     );
   } finally {
     await Promise.all([
