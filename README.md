@@ -82,6 +82,21 @@ https://relay-production-55c2.up.railway.app
 Override it with `--server` or the `RAILWAY_TUNNEL_SERVER_URL` environment variable when needed.
 Set the shared secret with `--pass` or `RAILWAY_TUNNEL_PASSWORD`.
 
+The relay can also send a notification every time a tunnel is created. Configure these server env vars:
+
+- `TUNNEL_CREATED_NOTIFICATION_URL`: Notification endpoint
+- `TUNNEL_CREATED_NOTIFICATION_TOKEN`: Bearer token used for that endpoint
+- `TUNNEL_CREATED_NOTIFICATION_LABEL`: Optional label, defaults to `Tunnel`
+
+Each successful tunnel registration sends a JSON payload like:
+
+```json
+{
+  "message": "Tunnel created: https://admin.request-tunnel.online/",
+  "label": "Tunnel"
+}
+```
+
 Start the relay server:
 
 ```bash
@@ -155,7 +170,8 @@ Deployment steps:
 4. In Railway service settings, generate a public domain.
 5. Set `PUBLIC_BASE_URL` to that generated domain, for example `https://your-app.up.railway.app`.
 6. Set `TUNNEL_PASSWORD` to your shared secret, for example `31415`.
-7. Redeploy so the tunnel URLs use the final public base URL and enforce registration auth.
+7. Optionally set `TUNNEL_CREATED_NOTIFICATION_URL`, `TUNNEL_CREATED_NOTIFICATION_TOKEN`, and `TUNNEL_CREATED_NOTIFICATION_LABEL` if you want a notification on each successful tunnel registration.
+8. Redeploy so the tunnel URLs use the final public base URL and enforce registration auth.
 
 For host-based subdomain URLs on Railway:
 

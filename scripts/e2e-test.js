@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { spawn } = require("node:child_process");
 const http = require("node:http");
 const net = require("node:net");
+const { inspect } = require("node:util");
 const { setTimeout: delay } = require("node:timers/promises");
 
 function startProcess(name, args, env = {}) {
@@ -44,6 +45,21 @@ async function waitForHttp(url, timeoutMs = 10_000) {
   }
 
   throw new Error(`Timed out waiting for ${url}`);
+}
+
+async function waitForCondition(check, timeoutMs = 10_000) {
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    const result = check();
+    if (result) {
+      return result;
+    }
+
+    await delay(100);
+  }
+
+  throw new Error("Timed out waiting for condition.");
 }
 
 async function waitForTunnelUrls(child, expectedCount, timeoutMs = 10_000) {
@@ -191,8 +207,44 @@ async function waitForExit(child, timeoutMs = 10_000) {
   });
 }
 
+function assertNotificationBodiesEqual(actualBodies, expectedBodies) {
+  const normalize = (body) => JSON.stringify(body);
+  const actual = actualBodies.map(normalize).sort();
+  const expected = expectedBodies.map(normalize).sort();
+  assert.deepEqual(
+    actual,
+    expected,
+    `Expected notification bodies ${inspect(expectedBodies)} but received ${inspect(actualBodies)}`,
+  );
+}
+
 async function main() {
   const sharedPassword = "31415";
+  const receivedNotifications = [];
+  const notifierAuthHeader = "Bearer test-notifier-token";
+  const notificationServer = http.createServer(async (request, response) => {
+    const chunks = [];
+
+    request.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
+
+    request.on("end", () => {
+      receivedNotifications.push({
+        authorization: request.headers.authorization || "",
+        body: JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}"),
+      });
+      response.statusCode = 200;
+      response.setHeader("content-type", "application/json; charset=utf-8");
+      response.end(JSON.stringify({ ok: true }));
+    });
+  });
+  const notifierPort = await findAvailablePort(9090);
+  await new Promise((resolve, reject) => {
+    notificationServer.once("error", reject);
+    notificationServer.listen(notifierPort, "127.0.0.1", resolve);
+  });
+  const notifierUrl = `http://127.0.0.1:${notifierPort}/v1/ip-notifications`;
   const firstPagePort = await findAvailablePort(3500);
   const firstPage = startProcess("page-a", ["examples/test-page.js"], {
     PAGE_NAME: "Alpha Demo",
@@ -222,6 +274,9 @@ async function main() {
       PORT: String(pathRelayPort),
       PUBLIC_BASE_URL: pathRelayBaseUrl,
       TUNNEL_PASSWORD: sharedPassword,
+      TUNNEL_CREATED_NOTIFICATION_URL: notifierUrl,
+      TUNNEL_CREATED_NOTIFICATION_TOKEN: notifierAuthHeader.slice("Bearer ".length),
+      TUNNEL_CREATED_NOTIFICATION_LABEL: "Tunnel",
     });
     await waitForHttp(`${pathRelayBaseUrl}/health`);
 
@@ -262,6 +317,24 @@ async function main() {
 
     assert.match(alphaPathHtml, /Alpha Demo/);
     assert.match(betaPathHtml, /Beta Demo/);
+    await waitForCondition(() => receivedNotifications.length >= 2);
+    assertNotificationBodiesEqual(
+      receivedNotifications.slice(0, 2).map((notification) => notification.body),
+      [
+        {
+          message: `Tunnel created: ${alphaPathRegistration.publicUrl}`,
+          label: "Tunnel",
+        },
+        {
+          message: `Tunnel created: ${betaPathRegistration.publicUrl}`,
+          label: "Tunnel",
+        },
+      ],
+    );
+    assert.deepEqual(
+      receivedNotifications.slice(0, 2).map((notification) => notification.authorization),
+      [notifierAuthHeader, notifierAuthHeader],
+    );
 
     const unauthorizedTunnel = startProcess("cli-denied", [
       "bin/railway-tunnel.js",
@@ -275,6 +348,8 @@ async function main() {
     const deniedExit = await waitForExit(unauthorizedTunnel);
     assert.equal(deniedExit.code, 1);
     assert.match(unauthorizedTunnel.collectedStderr, /Invalid tunnel password/);
+    await delay(250);
+    assert.equal(receivedNotifications.length, 2);
 
     process.stdout.write(
       `\nVerified path-routed tunnel URLs from separate CLI processes: ${alphaPathRegistration.publicUrl} and ${betaPathRegistration.publicUrl}\n`,
@@ -288,6 +363,9 @@ async function main() {
       PUBLIC_BASE_URL: hostRelayBaseUrl,
       PUBLIC_WILDCARD_DOMAIN: "tunnels.example.test",
       TUNNEL_PASSWORD: sharedPassword,
+      TUNNEL_CREATED_NOTIFICATION_URL: notifierUrl,
+      TUNNEL_CREATED_NOTIFICATION_TOKEN: notifierAuthHeader.slice("Bearer ".length),
+      TUNNEL_CREATED_NOTIFICATION_LABEL: "Tunnel",
     });
     await waitForHttp(`${hostRelayBaseUrl}/health`);
 
@@ -333,6 +411,20 @@ async function main() {
     assert.equal(betaHostResponse.statusCode, 200);
     assert.match(alphaHostResponse.body, /Alpha Demo/);
     assert.match(betaHostResponse.body, /Beta Demo/);
+    await waitForCondition(() => receivedNotifications.length >= 4);
+    assertNotificationBodiesEqual(
+      receivedNotifications.slice(2, 4).map((notification) => notification.body),
+      [
+        {
+          message: `Tunnel created: ${hostAlphaRegistration.publicUrl}`,
+          label: "Tunnel",
+        },
+        {
+          message: `Tunnel created: ${hostBetaRegistration.publicUrl}`,
+          label: "Tunnel",
+        },
+      ],
+    );
 
     const hostTunnelConflict = startProcess("cli-host-conflict", [
       "bin/railway-tunnel.js",
@@ -351,12 +443,17 @@ async function main() {
       hostTunnelConflict.collectedStderr,
       /Requested subdomain "alphahost\.tunnels\.example\.test" is already in use\./,
     );
+    await delay(250);
+    assert.equal(receivedNotifications.length, 4);
 
     process.stdout.write(
       `Verified host-routed tunnel URLs from separate CLI processes: ${hostAlphaRegistration.publicUrl} and ${hostBetaRegistration.publicUrl}\n`,
     );
     process.stdout.write(
       "Verified requested subdomain collision fails with a clear error\n",
+    );
+    process.stdout.write(
+      "Verified tunnel-created notifications are sent only for successful registrations\n",
     );
   } finally {
     await Promise.all([
@@ -369,6 +466,9 @@ async function main() {
       terminate(secondPage),
       terminate(firstPage),
     ]);
+    await new Promise((resolve) => {
+      notificationServer.close(resolve);
+    });
   }
 }
 

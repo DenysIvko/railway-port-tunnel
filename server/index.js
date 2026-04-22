@@ -20,6 +20,12 @@ const wildcardBaseDomain = normalizeWildcardBaseDomain(
   process.env.PUBLIC_WILDCARD_DOMAIN,
 );
 const tunnelPassword = process.env.TUNNEL_PASSWORD || "";
+const tunnelCreatedNotificationUrl =
+  process.env.TUNNEL_CREATED_NOTIFICATION_URL || "";
+const tunnelCreatedNotificationToken =
+  process.env.TUNNEL_CREATED_NOTIFICATION_TOKEN || "";
+const tunnelCreatedNotificationLabel =
+  process.env.TUNNEL_CREATED_NOTIFICATION_LABEL || "Tunnel";
 const maxBodySize = 10 * 1024 * 1024;
 const tunnelSockets = new Map();
 const pendingResponses = new Map();
@@ -85,6 +91,31 @@ function releasePendingRequestsForSocket(ws, error) {
     clearTimeout(pending.timeout);
     pendingResponses.delete(requestId);
     pending.reject(error);
+  }
+}
+
+async function notifyTunnelCreated(publicUrl) {
+  if (!tunnelCreatedNotificationUrl || !tunnelCreatedNotificationToken) {
+    return;
+  }
+
+  const response = await fetch(tunnelCreatedNotificationUrl, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${tunnelCreatedNotificationToken}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      message: `Tunnel created: ${publicUrl}`,
+      label: tunnelCreatedNotificationLabel,
+    }),
+  });
+
+  if (!response.ok) {
+    const responseText = await response.text();
+    throw new Error(
+      `Tunnel notification failed with ${response.status}: ${responseText || response.statusText}`,
+    );
   }
 }
 
@@ -240,15 +271,19 @@ wsServer.on("connection", (ws) => {
 
       ws.tunnelId = tunnelId;
       tunnelSockets.set(tunnelId, ws);
+      const publicUrl = buildPublicUrl(
+        publicBaseUrl,
+        tunnelId,
+        wildcardBaseDomain,
+      );
 
       sendJson(ws, {
         type: "registered",
         tunnelId,
-        publicUrl: buildPublicUrl(
-          publicBaseUrl,
-          tunnelId,
-          wildcardBaseDomain,
-        ),
+        publicUrl,
+      });
+      notifyTunnelCreated(publicUrl).catch((error) => {
+        console.error(error.message);
       });
       return;
     }
